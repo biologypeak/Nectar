@@ -13,7 +13,7 @@ import pyarrow as pa
 import lancedb
 import torch
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -25,10 +25,10 @@ warnings.filterwarnings("ignore")
 
 # ── Config ────────────────────────────────────────────────────
 LLM_MODEL_ID   = "Qwen/Qwen2.5-0.5B-Instruct"
-EMBED_MODEL_ID = "mixedbread-ai/mxbai-embed-large-v1"
+EMBED_MODEL_ID = "mixedbread-ai/mxbai-embed-xsmall-v1" # mxbai-embed-large-v1
 LANCE_DIR      = "./nectar_lancedb"
 TABLE_NAME     = "nectar_papers"
-EMBED_DIM      = 1024
+EMBED_DIM      = 384   #1024
 INDEX_MIN_ROWS = 256
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -219,7 +219,8 @@ def get_db_stats() -> dict:
     if tbl is None:
         return {"total_chunks": 0, "total_papers": 0, "papers": [], "has_index": False}
 
-    df = tbl.to_pandas(columns=["paper_id", "paper_name", "page"])
+    #df = tbl.to_pandas(columns=["paper_id", "paper_name", "page"])
+    df = tbl.search().select(["paper_id", "paper_name", "page"]).to_pandas()
     papers_df = df.groupby("paper_id").agg(
         paper_name=("paper_name", "first"),
         chunks=("paper_id", "count"),
@@ -369,7 +370,8 @@ def explore_database(paper_filter: str = "", page_min: int = 0, page_max: int = 
     if tbl is None:
         return []
 
-    df = tbl.to_pandas(columns=["paper_name", "page", "chunk"])
+    #df = tbl.to_pandas(columns=["paper_name", "page", "chunk"])
+    df = tbl.search().select(["paper_name", "page", "chunk"]).to_pandas()
 
     if paper_filter:
         df = df[df["paper_name"].str.contains(paper_filter, case=False, na=False)]
@@ -384,5 +386,8 @@ def get_paper_names() -> list[str]:
     tbl = get_table()
     if tbl is None:
         return []
-    df = tbl.to_pandas(columns=["paper_name"]).drop_duplicates()
+    #df = tbl.to_pandas(columns=["paper_name"]).drop_duplicates()
+    df = tbl.search().select(["paper_name"]).to_pandas().drop_duplicates()
     return sorted(df["paper_name"].tolist())
+
+    
