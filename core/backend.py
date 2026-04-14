@@ -357,25 +357,41 @@ def retrieve_chunks(query: str, k: int) -> list[dict]:
     return results
 
 
-def answer_query(query: str, k_retrieve: int, k_rerank: int) -> dict:
+def answer_query(query: str, k_retrieve: int, k_rerank: int,
+                 rerank_threshold: float = 0.0) -> dict:
     """
     Two-stage retrieval + reranking pipeline.
     1. Retrieve k_retrieve candidates by vector similarity.
     2. Rerank with mxbai-rerank-xsmall-v1, keep top k_rerank.
-    Returns dict: answer (str), chunks (list[dict]), error (str|None)
+    3. If rerank_threshold > 0, discard chunks whose rerank_score < threshold.
+       If no chunks survive the threshold, return a no-information answer immediately
+       without calling the LLM.
+    Returns dict: answer (str), chunks (list[dict]), error (str|None), below_threshold (bool)
     Each chunk dict has: paper_name, page, chunk, affinity, distance, rerank_score
     """
     if not query or not query.strip():
-        return {"answer": "", "chunks": [], "error": "Empty query."}
+        return {"answer": "", "chunks": [], "error": "Empty query.", "below_threshold": False}
     if row_count() == 0:
-        return {"answer": "", "chunks": [], "error": "Database is empty."}
+        return {"answer": "", "chunks": [], "error": "Database is empty.", "below_threshold": False}
 
     try:
         candidates = retrieve_chunks(query, k_retrieve)
         if not candidates:
-            return {"answer": "No relevant context found for this query.", "chunks": [], "error": None}
+            return {"answer": "No relevant context found for this query.", "chunks": [], "error": None, "below_threshold": False}
 
         reranked = rerank_chunks(query, candidates, k_rerank)
+
+        # Apply rerank threshold: keep only chunks that meet the minimum score
+        if rerank_threshold > 0.0:
+            above = [c for c in reranked if c["rerank_score"] >= rerank_threshold]
+            if not above:
+                return {
+                    "answer": "I don't have enough information in the knowledge base to answer this question.",
+                    "chunks": reranked,   # still return all chunks so the panel shows why
+                    "error": None,
+                    "below_threshold": True,
+                }
+            reranked = above
 
         context = "\n\n".join(c["chunk"] for c in reranked)
         prompt  = PromptTemplate(
@@ -391,10 +407,10 @@ def answer_query(query: str, k_retrieve: int, k_rerank: int) -> dict:
         result = chain.invoke({"context": context, "question": query})
         if "<|im_end|>" in result:
             result = result.split("<|im_end|>")[0]
-        return {"answer": result.strip(), "chunks": reranked, "error": None}
+        return {"answer": result.strip(), "chunks": reranked, "error": None, "below_threshold": False}
 
     except Exception as e:
-        return {"answer": "", "chunks": [], "error": traceback.format_exc()}
+        return {"answer": "", "chunks": [], "error": traceback.format_exc(), "below_threshold": False}
 
 
 # ── Explorer ─────────────────────────────────────────────────

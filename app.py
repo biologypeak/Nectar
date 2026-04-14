@@ -177,7 +177,8 @@ with st.sidebar:
     st.markdown(
         "<div style='font-size:0.7rem; color:#555e78; line-height:1.6;'>"
         "LLM: Qwen2.5-0.5B<br>"
-        "Embeddings: mxbai-embed-large-v1<br>"
+        "Embeddings: mxbai-embed-xsmall-v1<br>"
+        "Reranker: mxbai-rerank-xsmall-v1<br>"
         "VectorDB: LanceDB · Lance format<br>"
         "Schema: PyArrow typed"
         "</div>",

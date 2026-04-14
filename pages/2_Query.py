@@ -82,6 +82,21 @@ with left:
     # Clamp silently in case user edits state directly
     k_rerank = min(k_rerank, k_retrieve)
 
+    rerank_threshold_pct = st.slider(
+        "Minimum rerank score to answer",
+        min_value=0,
+        max_value=50,
+        value=10,
+        step=1,
+        format="%d%%",
+        help=(
+            "If every retrieved chunk scores below this threshold after reranking, "
+            "the model will reply that it lacks sufficient information rather than "
+            "generating an answer from low-confidence context. Set to 0 to disable."
+        ),
+    )
+    rerank_threshold = rerank_threshold_pct / 100.0
+
     st.markdown(
         f"<div style='font-size:0.8rem; color:#8890a8; margin-top:-0.3rem; margin-bottom:1rem;'>"
         f"Searching across <b style='color:#e0e4f0;'>{n_chunks:,}</b> indexed chunks."
@@ -90,7 +105,13 @@ with left:
     )
 
     st.markdown("---")
-    st.markdown('<div class="section-label">Retrieved Chunks</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-label">Retrieved Chunks</div>'
+        '<div style="font-size:0.68rem; color:#555e78; margin-top:-0.2rem; margin-bottom:0.6rem;">'
+        '✦ sorted by rerank score · ◈ similarity for reference'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     chunk_placeholder = st.empty()
     chunk_placeholder.markdown(
         "<div style='color:#555e78; font-size:0.85rem; font-style:italic;'>"
@@ -130,19 +151,29 @@ if submit:
         st.warning("Please enter a question before submitting.")
     else:
         with st.spinner(f"Retrieving {k_retrieve} candidates, reranking to top {k_rerank}…"):
-            result = answer_query(query.strip(), k_retrieve, k_rerank)
+            result = answer_query(query.strip(), k_retrieve, k_rerank, rerank_threshold)
 
         if result["error"]:
             answer_placeholder.error(f"Error: {result['error']}")
         else:
-            # Render answer
-            answer_placeholder.markdown(
-                f"<div class='answer-box'>{result['answer']}</div>",
-                unsafe_allow_html=True,
-            )
+            # Render answer — use a warning style when below threshold
+            if result.get("below_threshold"):
+                answer_placeholder.markdown(
+                    f"<div class='answer-box' style='border-color:#4a3020; color:#e8a87c;'>"
+                    f"⚠ {result['answer']}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                answer_placeholder.markdown(
+                    f"<div class='answer-box'>{result['answer']}</div>",
+                    unsafe_allow_html=True,
+                )
 
             # Render chunk panel
             chunks = result["chunks"]
+            # Defensive sort: ensure display order is always by rerank score descending
+            chunks = sorted(chunks, key=lambda x: x.get("rerank_score", 0), reverse=True)
             if chunks:
                 chunk_html = ""
                 for i, c in enumerate(chunks, 1):
@@ -151,34 +182,36 @@ if submit:
                     sim_bar  = sim_pct
                     rr_bar   = rr_pct
                     preview  = c["chunk"][:480] + ("…" if len(c["chunk"]) > 480 else "")
+                    # Dim chunks with very low rerank score (< 10%)
+                    card_opacity = "1.0" if rr_pct >= 10 else "0.55"
 
                     chunk_html += f"""
-                    <div class="chunk-card">
+                    <div class="chunk-card" style="opacity:{card_opacity};">
                         <div class="chunk-meta">
                             #{i} &nbsp;·&nbsp;
                             <b style="color:#c8cfe0;">{c['paper_name']}</b>
                             &nbsp;·&nbsp; p.{c['page']}
                         </div>
                         <div style="display:flex; gap:0.6rem; align-items:center; margin-bottom:0.55rem; flex-wrap:wrap;">
-                            <span class="metric-pill pill-sim">
-                                ◈ Similarity&nbsp;&nbsp;<b>{sim_pct}%</b>
-                            </span>
                             <span class="metric-pill pill-rr">
                                 ✦ Rerank&nbsp;&nbsp;<b>{rr_pct}%</b>
+                            </span>
+                            <span class="metric-pill pill-sim">
+                                ◈ Similarity&nbsp;&nbsp;<b>{sim_pct}%</b>
                             </span>
                             <span style="font-size:0.68rem; color:#555e78;">dist {c['distance']}</span>
                         </div>
                         <div style="display:flex; gap:6px; margin-bottom:0.7rem;">
                             <div style="flex:1;">
-                                <div style="font-size:0.62rem; color:#4a5270; margin-bottom:2px;">similarity</div>
-                                <div style="background:#1e2130; border-radius:3px; height:3px; width:100%;">
-                                    <div style="background:linear-gradient(90deg,#7c9ef5,#a78bfa); border-radius:3px; height:3px; width:{sim_bar}%;"></div>
-                                </div>
-                            </div>
-                            <div style="flex:1;">
                                 <div style="font-size:0.62rem; color:#2a4040; margin-bottom:2px;">rerank</div>
                                 <div style="background:#1e2130; border-radius:3px; height:3px; width:100%;">
                                     <div style="background:linear-gradient(90deg,#4ecca3,#38a89d); border-radius:3px; height:3px; width:{rr_bar}%;"></div>
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <div style="font-size:0.62rem; color:#4a5270; margin-bottom:2px;">similarity</div>
+                                <div style="background:#1e2130; border-radius:3px; height:3px; width:100%;">
+                                    <div style="background:linear-gradient(90deg,#7c9ef5,#a78bfa); border-radius:3px; height:3px; width:{sim_bar}%;"></div>
                                 </div>
                             </div>
                         </div>
