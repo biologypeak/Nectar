@@ -24,12 +24,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ── Config ────────────────────────────────────────────────────
-LLM_MODEL_ID   = "Qwen/Qwen2.5-0.5B-Instruct"
-EMBED_MODEL_ID = "mixedbread-ai/mxbai-embed-xsmall-v1" # mxbai-embed-large-v1
-LANCE_DIR      = "./nectar_lancedb"
-TABLE_NAME     = "nectar_papers"
-EMBED_DIM      = 384   #1024
-INDEX_MIN_ROWS = 256
+LLM_MODEL_ID    = "Qwen/Qwen2.5-0.5B-Instruct"
+EMBED_MODEL_ID  = "mixedbread-ai/mxbai-embed-xsmall-v1" # mxbai-embed-large-v1
+RERANK_MODEL_ID = "mixedbread-ai/mxbai-rerank-xsmall-v1"
+LANCE_DIR       = "./nectar_lancedb"
+TABLE_NAME      = "nectar_papers"
+EMBED_DIM       = 384   #1024
+INDEX_MIN_ROWS  = 256
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -90,6 +91,7 @@ METRIC_INFO = {
 # ── Singletons ────────────────────────────────────────────────
 _llm_instance       = None
 _embedding_instance = None
+_reranker_instance  = None
 
 
 def get_llm():
@@ -127,6 +129,19 @@ def get_embedding_model():
             },
         )
     return _embedding_instance
+
+
+def get_reranker():
+    global _reranker_instance
+    if _reranker_instance is None:
+        from sentence_transformers import CrossEncoder
+        import torch.nn as nn
+        _reranker_instance = CrossEncoder(
+            RERANK_MODEL_ID,
+            device=DEVICE,
+            default_activation_function=nn.Sigmoid(),
+        )
+    return _reranker_instance
 
 
 # ── LanceDB helpers ───────────────────────────────────────────
@@ -168,6 +183,23 @@ def already_indexed(filepath: str) -> bool:
 
 def embed_texts(texts: list[str]) -> np.ndarray:
     return np.array(get_embedding_model().embed_documents(texts), dtype=np.float32)
+
+
+def rerank_chunks(query: str, chunks: list[dict], top_n: int) -> list[dict]:
+    """
+    Cross-encoder reranking with mxbai-rerank-xsmall-v1.
+    Adds 'rerank_score' (float 0–1) to each chunk dict.
+    Returns the top_n chunks sorted by rerank_score descending.
+    """
+    if not chunks:
+        return []
+    reranker = get_reranker()
+    pairs    = [(query, c["chunk"]) for c in chunks]
+    scores   = reranker.predict(pairs)          # numpy array, sigmoid-activated → [0, 1]
+    for c, score in zip(chunks, scores):
+        c["rerank_score"] = round(float(score), 4)
+    ranked = sorted(chunks, key=lambda x: x["rerank_score"], reverse=True)
+    return ranked[:top_n]
 
 
 # ── Ingestion ─────────────────────────────────────────────────
@@ -325,9 +357,13 @@ def retrieve_chunks(query: str, k: int) -> list[dict]:
     return results
 
 
-def answer_query(query: str, k: int) -> dict:
+def answer_query(query: str, k_retrieve: int, k_rerank: int) -> dict:
     """
+    Two-stage retrieval + reranking pipeline.
+    1. Retrieve k_retrieve candidates by vector similarity.
+    2. Rerank with mxbai-rerank-xsmall-v1, keep top k_rerank.
     Returns dict: answer (str), chunks (list[dict]), error (str|None)
+    Each chunk dict has: paper_name, page, chunk, affinity, distance, rerank_score
     """
     if not query or not query.strip():
         return {"answer": "", "chunks": [], "error": "Empty query."}
@@ -335,11 +371,13 @@ def answer_query(query: str, k: int) -> dict:
         return {"answer": "", "chunks": [], "error": "Database is empty."}
 
     try:
-        chunks = retrieve_chunks(query, k)
-        if not chunks:
+        candidates = retrieve_chunks(query, k_retrieve)
+        if not candidates:
             return {"answer": "No relevant context found for this query.", "chunks": [], "error": None}
 
-        context = "\n\n".join(c["chunk"] for c in chunks)
+        reranked = rerank_chunks(query, candidates, k_rerank)
+
+        context = "\n\n".join(c["chunk"] for c in reranked)
         prompt  = PromptTemplate(
             input_variables=["context", "question"],
             template=(
@@ -353,7 +391,7 @@ def answer_query(query: str, k: int) -> dict:
         result = chain.invoke({"context": context, "question": query})
         if "<|im_end|>" in result:
             result = result.split("<|im_end|>")[0]
-        return {"answer": result.strip(), "chunks": chunks, "error": None}
+        return {"answer": result.strip(), "chunks": reranked, "error": None}
 
     except Exception as e:
         return {"answer": "", "chunks": [], "error": traceback.format_exc()}

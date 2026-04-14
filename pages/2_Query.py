@@ -1,6 +1,6 @@
 """
 Page 2 — Query
-Natural language querying · k-slider · Answer panel · Chunk Explorer with affinity scores
+Natural language querying · retrieval + reranking · Answer panel · Chunk Explorer with dual metrics
 """
 
 import sys, os
@@ -22,6 +22,9 @@ header[data-testid="stHeader"] { background:#0f1117; }
 .chunk-meta    { font-size:0.72rem; color:#8890a8; margin-bottom:0.5rem; letter-spacing:0.03em; }
 .answer-box    { background:#12151f; border:1px solid #2a2d3e; border-radius:8px; padding:1.4rem 1.6rem; font-size:0.95rem; line-height:1.75; color:#dce3f5; white-space:pre-wrap; }
 .section-label { font-size:0.7rem; letter-spacing:0.12em; text-transform:uppercase; color:#7c9ef5; font-weight:600; margin-bottom:0.5rem; }
+.metric-pill   { display:inline-block; border-radius:4px; padding:1px 7px; font-size:0.70rem; font-weight:600; letter-spacing:0.04em; }
+.pill-sim      { background:#1e2a4a; color:#7c9ef5; }
+.pill-rr       { background:#1e3530; color:#4ecca3; }
 hr { border-color:#1e2130; }
 .stButton > button { border-radius:6px; font-weight:600; }
 </style>
@@ -32,7 +35,7 @@ st.markdown("## 🔍 Query")
 st.markdown(
     "<div style='color:#8890a8; font-size:0.9rem; margin-bottom:1.5rem;'>"
     "Ask questions across your corpus in natural language. "
-    "The answer is grounded exclusively in the retrieved chunks — no hallucination from pre-training knowledge."
+    "Retrieval uses vector similarity; a cross-encoder reranker then selects the most relevant chunks."
     "</div>",
     unsafe_allow_html=True,
 )
@@ -51,18 +54,33 @@ left, right = st.columns([1, 2], gap="large")
 with left:
     st.markdown('<div class="section-label">Retrieval Settings</div>', unsafe_allow_html=True)
 
-    k = st.slider(
-        "Chunks to retrieve (k)",
-        min_value=1,
-        max_value=20,
-        value=5,
-        step=1,
+    k_retrieve = st.slider(
+        "Candidates retrieved by similarity",
+        min_value=20,
+        max_value=200,
+        value=50,
+        step=5,
         help=(
-            "Number of vector-store chunks passed as context to the LLM. "
-            "Higher k = more context, potentially slower and noisier. "
-            "Lower k = more precise but may miss relevant passages."
+            "Number of chunks fetched from the vector store by cosine similarity. "
+            "These are then re-scored by the cross-encoder reranker."
         ),
     )
+
+    k_rerank = st.slider(
+        "Best chunks after reranking",
+        min_value=5,
+        max_value=30,
+        value=10,
+        step=1,
+        help=(
+            "Number of chunks kept after cross-encoder reranking "
+            "(mxbai-rerank-xsmall-v1). Only these are passed to the LLM as context "
+            "and shown in the chunk panel."
+        ),
+    )
+
+    # Clamp silently in case user edits state directly
+    k_rerank = min(k_rerank, k_retrieve)
 
     st.markdown(
         f"<div style='font-size:0.8rem; color:#8890a8; margin-top:-0.3rem; margin-bottom:1rem;'>"
@@ -111,8 +129,8 @@ if submit:
     if not query.strip():
         st.warning("Please enter a question before submitting.")
     else:
-        with st.spinner("Retrieving and generating…"):
-            result = answer_query(query.strip(), k)
+        with st.spinner(f"Retrieving {k_retrieve} candidates, reranking to top {k_rerank}…"):
+            result = answer_query(query.strip(), k_retrieve, k_rerank)
 
         if result["error"]:
             answer_placeholder.error(f"Error: {result['error']}")
@@ -128,8 +146,10 @@ if submit:
             if chunks:
                 chunk_html = ""
                 for i, c in enumerate(chunks, 1):
-                    pct      = int(c["affinity"] * 100)
-                    bar_w    = int(c["affinity"] * 100)
+                    sim_pct  = int(c["affinity"] * 100)
+                    rr_pct   = int(c.get("rerank_score", 0) * 100)
+                    sim_bar  = sim_pct
+                    rr_bar   = rr_pct
                     preview  = c["chunk"][:480] + ("…" if len(c["chunk"]) > 480 else "")
 
                     chunk_html += f"""
@@ -138,12 +158,29 @@ if submit:
                             #{i} &nbsp;·&nbsp;
                             <b style="color:#c8cfe0;">{c['paper_name']}</b>
                             &nbsp;·&nbsp; p.{c['page']}
-                            &nbsp;·&nbsp;
-                            <b style="color:#7c9ef5;">{pct}% affinity</b>
-                            &nbsp;·&nbsp; dist {c['distance']}
                         </div>
-                        <div style="background:#1e2130; border-radius:3px; height:4px; width:100%; margin-bottom:0.6rem;">
-                            <div style="background:linear-gradient(90deg,#7c9ef5,#a78bfa); border-radius:3px; height:4px; width:{bar_w}%;"></div>
+                        <div style="display:flex; gap:0.6rem; align-items:center; margin-bottom:0.55rem; flex-wrap:wrap;">
+                            <span class="metric-pill pill-sim">
+                                ◈ Similarity&nbsp;&nbsp;<b>{sim_pct}%</b>
+                            </span>
+                            <span class="metric-pill pill-rr">
+                                ✦ Rerank&nbsp;&nbsp;<b>{rr_pct}%</b>
+                            </span>
+                            <span style="font-size:0.68rem; color:#555e78;">dist {c['distance']}</span>
+                        </div>
+                        <div style="display:flex; gap:6px; margin-bottom:0.7rem;">
+                            <div style="flex:1;">
+                                <div style="font-size:0.62rem; color:#4a5270; margin-bottom:2px;">similarity</div>
+                                <div style="background:#1e2130; border-radius:3px; height:3px; width:100%;">
+                                    <div style="background:linear-gradient(90deg,#7c9ef5,#a78bfa); border-radius:3px; height:3px; width:{sim_bar}%;"></div>
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <div style="font-size:0.62rem; color:#2a4040; margin-bottom:2px;">rerank</div>
+                                <div style="background:#1e2130; border-radius:3px; height:3px; width:100%;">
+                                    <div style="background:linear-gradient(90deg,#4ecca3,#38a89d); border-radius:3px; height:3px; width:{rr_bar}%;"></div>
+                                </div>
+                            </div>
                         </div>
                         {preview}
                     </div>
