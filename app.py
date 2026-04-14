@@ -143,6 +143,7 @@ with st.sidebar:
         "📥  Knowledge Base":   "pages/1_Knowledge_Base.py",
         "🔍  Query":            "pages/2_Query.py",
         "🗂️  Explorer":         "pages/3_Explorer.py",
+        "🔭  Vector Space":     "pages/4_Vector_Space.py",
     }
     for label in pages:
         st.page_link(pages[label], label=label)

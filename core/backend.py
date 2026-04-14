@@ -390,4 +390,32 @@ def get_paper_names() -> list[str]:
     df = tbl.search().select(["paper_name"]).to_pandas().drop_duplicates()
     return sorted(df["paper_name"].tolist())
 
+
+def load_all_vectors() -> tuple[np.ndarray, "pd.DataFrame"]:
+    """
+    Load every row from LanceDB.
+    Returns (vectors, meta_df) where:
+      - vectors  : float32 ndarray shape (n, EMBED_DIM)
+      - meta_df  : DataFrame with columns paper_id, paper_name, page, chunk
+                   index is reset and aligned with vectors rows.
+    Returns (empty_array, empty_df) when the table does not exist.
+    """
+    import pandas as pd
+
+    tbl = get_table()
+    if tbl is None:
+        return np.empty((0, EMBED_DIM), dtype=np.float32), pd.DataFrame()
+
+    df = (
+        tbl.search()
+           .select(["paper_id", "paper_name", "page", "chunk", "vector"])
+           .to_pandas()
+    )
+    if df.empty:
+        return np.empty((0, EMBED_DIM), dtype=np.float32), pd.DataFrame()
+
+    vectors = np.stack(df["vector"].values).astype(np.float32)
+    meta    = df.drop(columns=["vector"]).reset_index(drop=True)
+    return vectors, meta
+
     
