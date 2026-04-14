@@ -15,7 +15,6 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
-from streamlit_plotly_events import plotly_events
 
 from core.backend import get_embedding_model, load_all_vectors, row_count
 
@@ -646,21 +645,23 @@ with left_col:
         highlighted_cluster=st.session_state["vs_query_cluster"],
     )
 
-    # plotly_events captures click; hover preview is handled via hovertemplate tooltip
-    clicked = plotly_events(
+    # Native Streamlit ≥1.33 selection API — no third-party package needed.
+    # on_select="rerun" triggers a rerun when the user clicks a point.
+    # Hover preview (220 chars) is shown via Plotly's hovertemplate — zero reruns.
+    event = st.plotly_chart(
         fig,
-        click_event=True,
-        hover_event=False,   # hover at 20k+ causes per-move reruns → too slow
-        select_event=False,
-        override_height=640,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="points",
         key="vs_plotly_chart",
     )
 
-    if clicked:
-        pt = clicked[0]
-        # Only process clicks on the corpus trace (curveNumber 0), not the query star
-        if pt.get("curveNumber", 0) == 0:
-            idx = pt.get("pointIndex", pt.get("pointNumber"))
+    sel_points = (event.selection.points if event and hasattr(event, "selection") else [])
+    if sel_points:
+        pt = sel_points[0]
+        # curve_number 0 = corpus trace; skip clicks on the query ★ (curve 1)
+        if pt.get("curve_number", 0) == 0:
+            idx = pt.get("point_index")
             if idx is not None and idx < len(active_meta):
                 row = active_meta.iloc[int(idx)]
                 new_chunk = {

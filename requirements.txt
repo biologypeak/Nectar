@@ -27,4 +27,4 @@ hdbscan>=0.8.0
 leidenalg>=0.10.0
 python-igraph>=0.11.0
 pynndescent>=0.5.0
-streamlit-plotly-events>=0.3.0
+plotly>=5.18.0
