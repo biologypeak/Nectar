@@ -17,7 +17,6 @@ import lancedb
 import torch
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
@@ -336,27 +335,35 @@ def rerank_chunks(query: str, chunks: list[dict], top_n: int) -> list[dict]:
 
 
 # ── Ingestion ─────────────────────────────────────────────────
-def ingest_pdf(filepath: str, config: IngestConfig | None = None) -> dict:
+def ingest_document(filepath: str, config: IngestConfig | None = None) -> dict:
     """
-    Returns dict with keys: name, status, chunks, skipped, error
-    Applies the full pre-processing → split → post-filter pipeline defined by config.
+    Universal ingestion: loads any supported format, applies the full
+    pre-processing → split → post-filter pipeline, and adds to LanceDB.
+    Returns dict with keys: name, status, chunks, skipped, error, format.
     """
+    from core.loader import load_document, is_structured, EXTENSION_LABELS
+
     if config is None:
         config = IngestConfig()
 
     name = Path(filepath).name
     pid  = paper_id(filepath)
+    ext  = Path(filepath).suffix.lower()
+    fmt  = EXTENSION_LABELS.get(ext, ext.lstrip(".").upper())
 
     if already_indexed(filepath):
-        return {"name": name, "status": "skipped", "chunks": 0, "skipped": True, "error": None}
+        return {"name": name, "status": "skipped", "chunks": 0,
+                "skipped": True, "error": None, "format": fmt}
 
     try:
-        loader = PyPDFLoader(filepath)
-        pages  = loader.load()
+        pages = load_document(filepath)
 
-        # ── Pre-processing: clean each page individually ──────
-        for doc in pages:
-            doc.page_content = _clean_text(doc.page_content, config)
+        # ── Pre-processing ────────────────────────────────────
+        # Skip text normalisation for code/structured formats —
+        # merging line-breaks or removing "headers" would corrupt content.
+        if not is_structured(filepath):
+            for doc in pages:
+                doc.page_content = _clean_text(doc.page_content, config)
 
         # ── Splitting ─────────────────────────────────────────
         splitter = RecursiveCharacterTextSplitter(
@@ -367,11 +374,17 @@ def ingest_pdf(filepath: str, config: IngestConfig | None = None) -> dict:
         chunks = splitter.split_documents(pages)
 
         # ── Post-filtering ────────────────────────────────────
-        chunks = _filter_chunks(chunks, config)
+        if not is_structured(filepath):
+            chunks = _filter_chunks(chunks, config)
+        else:
+            # Only apply min-length filter for structured formats
+            if config.min_chunk_chars > 0:
+                chunks = [c for c in chunks
+                          if len(c.page_content.strip()) >= config.min_chunk_chars]
 
         if not chunks:
             return {"name": name, "status": "empty", "chunks": 0, "skipped": False,
-                    "error": "No usable text after cleaning and filtering"}
+                    "error": "No usable text after cleaning and filtering", "format": fmt}
 
         texts      = [c.page_content for c in chunks]
         page_nums  = [int(c.metadata.get("page", 0)) for c in chunks]
@@ -386,14 +399,21 @@ def ingest_pdf(filepath: str, config: IngestConfig | None = None) -> dict:
         })
         tbl = get_or_create_table()
         tbl.add(batch)
-        return {"name": name, "status": "ok", "chunks": len(texts), "skipped": False, "error": None}
+        return {"name": name, "status": "ok", "chunks": len(texts),
+                "skipped": False, "error": None, "format": fmt}
 
     except Exception as e:
-        return {"name": name, "status": "error", "chunks": 0, "skipped": False, "error": str(e)}
+        return {"name": name, "status": "error", "chunks": 0,
+                "skipped": False, "error": str(e), "format": fmt}
 
 
-def ingest_multiple_pdfs(filepaths: list[str], config: IngestConfig | None = None) -> list[dict]:
-    return [ingest_pdf(fp, config) for fp in filepaths]
+def ingest_documents(filepaths: list[str], config: IngestConfig | None = None) -> list[dict]:
+    return [ingest_document(fp, config) for fp in filepaths]
+
+
+# Backward-compatibility aliases
+ingest_pdf          = ingest_document
+ingest_multiple_pdfs = ingest_documents
 
 
 def get_db_stats() -> dict:

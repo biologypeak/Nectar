@@ -2,17 +2,17 @@
 
 # 🍯 Nectar
 
-### Local RAG Platform for Scientific Literature — Built for Researchers, Designed for Health
+### Local RAG Platform for Any Document Format — Built for Researchers, Designed for Health
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.32+-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io)
 [![LangChain](https://img.shields.io/badge/LangChain-0.3+-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://langchain.com)
 [![LanceDB](https://img.shields.io/badge/LanceDB-columnar%20VDB-4F86C6?style=flat-square)](https://lancedb.com)
 [![PyArrow](https://img.shields.io/badge/PyArrow-typed%20schema-E25A1C?style=flat-square)](https://arrow.apache.org/docs/python)
-[![Version](https://img.shields.io/badge/version-4.1-F59E0B?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/version-4.2-F59E0B?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)](LICENSE)
 
-**Query scientific literature in natural language. 100% local. Zero API keys. Zero cloud.**
+**Query any document collection in natural language. 100% local. Zero API keys. Zero cloud.**
 
 [What's New](#-whats-new) · [Quickstart](#-quickstart) · [Architecture](#️-architecture) · [Pages](#-pages) · [API Reference](#-backend-api-reference) · [Roadmap](#-roadmap) · [Healthcare](#-nectar-in-healthcare)
 
@@ -22,15 +22,34 @@
 
 ## What is Nectar?
 
-Nectar is a **fully local Retrieval-Augmented Generation (RAG) platform** for scientific literature. Upload a corpus of PDF papers, embed them into a persistent columnar vector store, and interrogate your entire library in natural language — with full traceability from answer back to source chunk and page. A dedicated **Vector Space Explorer** lets you visualise, cluster, and navigate the entire embedding space interactively.
+Nectar is a **fully local Retrieval-Augmented Generation (RAG) platform** for building and querying a personal knowledge base. Upload documents in any format — PDFs, Word files, spreadsheets, Markdown notes, source code, e-books and more — embed them into a persistent vector store, and interrogate your entire library in natural language, with full traceability from answer back to source chunk and page. A dedicated **Vector Space Explorer** lets you visualise, cluster, and navigate the entire embedding space interactively.
 
-Built on **Qwen2.5-0.5B-Instruct** (LLM), **mixedbread-ai/mxbai-embed-xsmall-v1** (embeddings), **LanceDB** (vector store), and **Streamlit** (UI), Nectar is designed as a professional research tool with a clean dark interface suited for daily use.
+Built on **Qwen2.5-0.5B-Instruct** (LLM), **mixedbread-ai/mxbai-embed-xsmall-v1** (embeddings), **mixedbread-ai/mxbai-rerank-xsmall-v1** (reranker), **LanceDB** (vector store), and **Streamlit** (UI), Nectar is designed as a professional research tool with a clean dark interface suited for daily use.
 
 > No data leaves your machine. No subscription. No warmup between sessions.
 
 ---
 
 ## ✨ What's New
+
+### v4.2 — Universal document loader · Reranking pipeline · Smarter ingestion
+
+**25+ document formats supported**
+Every file is now converted to Markdown before embedding — PDFs, Word documents, OpenDocument, RTF, HTML, Markdown, LaTeX, RST, EPUB, CSV, TSV, JSON, JSONL, YAML, and all common source code formats. A new `core/loader.py` module handles conversion using format-specific libraries (python-docx, ebooklib, pylatexenc, BeautifulSoup, and others).
+
+**Configurable ingestion pipeline**
+The Knowledge Base page now exposes a full **Processing Pipeline** panel with three tabs:
+- *Pre-processing* — toggle character normalisation (ligatures, non-breaking spaces), header/footer removal, and two types of line-break merging
+- *Splitting* — control chunk size and overlap with sliders; see overlap as a percentage of chunk size in real time
+- *Post-filtering* — set a minimum chunk length, a maximum stop-word density to discard noisy fragments, and a Jaccard deduplication threshold to drop near-identical passages within the same document
+
+**Cross-encoder reranking**
+Retrieval now runs in two stages. After the initial vector similarity search fetches a pool of candidates, a cross-encoder (`mxbai-rerank-xsmall-v1`) re-scores every candidate by reading the query and chunk together. Only the top-N chunks by rerank score are passed to the LLM. The Query page exposes three sliders: number of candidates to retrieve, number of chunks to keep after reranking, and a confidence threshold below which the model declines to answer rather than guess.
+
+**Improved chunk panel**
+Retrieved chunks are sorted by rerank score (not similarity). Chunks that fall below 10% rerank score are visually dimmed. The panel header makes the sort order explicit.
+
+---
 
 ### v4.1 — Vector Space Explorer
 
@@ -52,16 +71,17 @@ Complete rewrite from a Gradio single-page interface to a **Streamlit multipage 
 
 ## Core Stack
 
-| Component | Technology | Version |
+| Component | Technology | Notes |
 |---|---|---|
 | **UI Framework** | Streamlit multipage app | ≥ 1.32 |
-| **LLM** | `Qwen/Qwen2.5-0.5B-Instruct` | HuggingFace Hub |
-| **Embeddings** | `mixedbread-ai/mxbai-embed-xsmall-v1` | 384-dim, L2-normalized |
-| **Vector Store** | LanceDB — Lance columnar format | ≥ 0.6 |
+| **LLM** | `Qwen/Qwen2.5-0.5B-Instruct` | Generates answers from retrieved context |
+| **Embeddings** | `mixedbread-ai/mxbai-embed-xsmall-v1` | 384-dim, L2-normalised, cosine distance |
+| **Reranker** | `mixedbread-ai/mxbai-rerank-xsmall-v1` | Cross-encoder, sigmoid output 0–1 |
+| **Vector Store** | LanceDB — Lance columnar format | ≥ 0.6, persistent on disk |
 | **Schema** | PyArrow typed `pa.schema` | ≥ 14.0 |
 | **ANN Index** | IVF_PQ — selectable metric | cosine / l2 / dot |
-| **Document Loader** | LangChain `PyPDFLoader` | ≥ 0.3 |
-| **Text Splitter** | `RecursiveCharacterTextSplitter` | 1000 chars · 100 overlap |
+| **Document Loader** | `core/loader.py` — 25+ formats | PDF, DOCX, ODT, RTF, HTML, MD, CSV, JSON, EPUB, LaTeX, RST, code… |
+| **Text Splitter** | `RecursiveCharacterTextSplitter` | Default 1000 chars · 100 overlap (user-adjustable) |
 | **Prompt Format** | Qwen native ChatML | `<\|im_start\|>` / `<\|im_end\|>` |
 | **Compute** | CUDA (GPU) or CPU | auto-detected via `torch.cuda.is_available()` |
 | **Visualisation** | Plotly + streamlit-plotly-events | WebGL scatter |
@@ -103,11 +123,12 @@ Nectar/
 ├── requirements.txt              # All Python dependencies
 │
 ├── core/
-│   └── backend.py                # All RAG/DB logic — UI-agnostic
+│   ├── backend.py                # All RAG/DB logic — UI-agnostic
+│   └── loader.py                 # Universal document loader (25+ formats → Markdown)
 │
 ├── pages/
-│   ├── 1_Knowledge_Base.py       # Upload · Ingest · Index Builder · DB Stats
-│   ├── 2_Query.py                # Natural language query · k-slider · Chunk Panel
+│   ├── 1_Knowledge_Base.py       # Upload · Ingest · Processing Pipeline · Index Builder · DB Stats
+│   ├── 2_Query.py                # Natural language query · reranking · threshold · Chunk Panel
 │   ├── 3_Explorer.py             # Filter · Browse · Cards/Table view
 │   └── 4_Vector_Space.py         # Interactive embedding space visualiser
 │
@@ -143,21 +164,28 @@ The corpus management page. Three independent sections on a single scrollable vi
 
 **Section 1 — Upload & Ingest**
 
-A multi-file uploader (`st.file_uploader(accept_multiple_files=True)`) accepts any number of PDFs in a single batch. On clicking "Embed & Add to Database", files are written to a temporary directory and passed to `ingest_multiple_pdfs()`. Results are displayed as a per-file status table with three badge states:
+A multi-file uploader accepts any number of files in a single batch across all 25+ supported formats. Below the uploader, a collapsible **Processing Pipeline** panel lets users configure ingestion before clicking "Embed & Add to Database":
+
+- *1 · Pre-processing tab* — four toggles: character normalisation (ligatures, special spaces, bullet variants), header/footer removal, hyphenated line-break merging, and soft line-break merging
+- *2 · Splitting tab* — chunk size (200–4000 chars) and chunk overlap (0–500 chars) sliders; a live label shows overlap as a percentage of chunk size
+- *3 · Post-filtering tab* — minimum chunk length, maximum stop-word ratio (0 = off), and Jaccard deduplication threshold (0 = off)
+
+On ingestion, files are written to a temporary directory and passed to `ingest_documents()`. Results are displayed as a per-file status row with badge and format label:
 
 | Badge | Meaning |
 |---|---|
-| `INDEXED` (green) | File successfully chunked, embedded, and written to LanceDB |
-| `SKIPPED` (yellow) | Paper already present in the DB (MD5 dedup) — no re-embedding |
+| `INDEXED` (green) | File successfully processed, embedded, and written to LanceDB |
+| `SKIPPED` (yellow) | File already present in the DB (path hash dedup) — no re-embedding |
+| `EMPTY` (red) | No usable text remained after cleaning and filtering |
 | `ERROR` (red) | Extraction or embedding failed — error message displayed |
 
 **Section 2 — IVF_PQ Index Builder**
 
-A `st.selectbox` lets the user choose among three distance metrics. Selecting a metric immediately renders a detail card showing the metric's mathematical formula, description, value range, recommended use case, and a "recommended" badge for cosine. Clicking "Build Index" calls `build_index(metric_key)`. If the corpus has fewer than `INDEX_MIN_ROWS` (256) chunks, an error is shown with the current count and the minimum required. On success, a four-column KPI card shows the metric used, number of IVF partitions, PQ sub-vectors, and total indexed chunks.
+A `st.selectbox` lets the user choose among three distance metrics. Selecting a metric immediately renders a detail card showing the metric's formula, description, value range, recommended use case, and a "recommended" badge for cosine. Clicking "Build Index" calls `build_index(metric_key)`. If the corpus has fewer than 256 chunks, an error is shown. On success, a four-column KPI card shows the metric used, number of IVF partitions, PQ sub-vectors, and total indexed chunks.
 
 **Section 3 — Database Statistics**
 
-Live KPIs rendered as metric cards: total papers, total chunks, average chunks per paper, and ANN index status (Active / None). Below the KPIs, a `st.dataframe` shows a per-paper breakdown (paper name, chunk count, unique pages) sorted by chunk count descending. A "Refresh" button re-runs `get_db_stats()` and a "Clear Database" button calls `clear_database()` followed by `st.rerun()`.
+Live KPIs rendered as metric cards: total documents, total chunks, average chunks per document, and ANN index status. Below the KPIs, a `st.dataframe` shows a per-document breakdown sorted by chunk count descending. A "Refresh" button and a "Clear Database" button are also provided.
 
 ---
 
@@ -167,26 +195,35 @@ The primary RAG interface. Layout is two columns: left (1/3) for retrieval contr
 
 **Retrieval Settings**
 
-A `st.slider` (range 1–20, default 5, step 1) controls `k` — the number of chunks retrieved per query. The current corpus size is displayed below the slider as contextual information.
+Three sliders control the two-stage retrieval pipeline:
+
+| Slider | Default | Effect |
+|---|---|---|
+| Candidates retrieved by similarity | 50 | How many chunks to fetch from the vector store in the first pass |
+| Best chunks after reranking | 10 | How many of those candidates to keep after the cross-encoder re-scores them |
+| Minimum rerank score to answer | 10% | If every retained chunk scores below this, the model replies "not enough information" instead of generating an answer. Set to 0 to disable. |
+
+The current corpus size is shown below the sliders for context.
 
 **Question Input**
 
-A `st.text_area` accepts the research question. Submission is triggered either by clicking "Run Query" or pressing Enter. The page calls `answer_query(query, k)` from the backend.
+A `st.text_area` accepts the research question. Clicking "Run Query" calls `answer_query(query, k_retrieve, k_rerank, rerank_threshold)` from the backend.
 
 **Answer Panel**
 
-The LLM response is rendered inside a custom `.answer-box` div with preserved whitespace. If `answer_query` returns an error, `st.error()` is displayed instead.
+The LLM response is rendered inside a styled `.answer-box`. If the rerank threshold was not met, the box switches to an amber warning style with a ⚠ prefix. If the backend returns an error, `st.error()` is shown instead.
 
 **Chunk Panel**
 
-After every query, the left column renders one `.chunk-card` per retrieved chunk. Each card shows:
+After every query, the left column renders one card per chunk, **sorted by rerank score descending**. Each card shows:
 
-- Paper name and page number in the `.chunk-meta` header
-- A gradient CSS affinity bar (width proportional to affinity score)
-- Affinity percentage and raw distance value
+- Document name and page number
+- Rerank score (primary, left) and similarity score (secondary, right) — both as percentage pills and progress bars
+- Raw cosine distance
 - Up to 480 characters of chunk text as preview
+- Chunks with rerank score below 10% are visually dimmed to 55% opacity
 
-Affinity is computed as `max(0, 1 − distance / 2)`, converting LanceDB's raw distance (lower = more similar) into an intuitive 0–100% score.
+All text from document content is HTML-escaped before rendering, so PDF passages containing `<`, `>` or `&` display correctly instead of breaking the card layout.
 
 ---
 
@@ -273,7 +310,8 @@ All functions are in `core/backend.py`. The module is UI-agnostic — every func
 | Constant | Value | Description |
 |---|---|---|
 | `LLM_MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | HuggingFace LLM identifier |
-| `EMBED_MODEL_ID` | `mixedbread-ai/mxbai-embed-xsmall-v1` | Embedding model identifier |
+| `EMBED_MODEL_ID` | `mixedbread-ai/mxbai-embed-xsmall-v1` | Embedding model (384-dim) |
+| `RERANK_MODEL_ID` | `mixedbread-ai/mxbai-rerank-xsmall-v1` | Cross-encoder reranker |
 | `LANCE_DIR` | `./nectar_lancedb` | LanceDB root directory |
 | `TABLE_NAME` | `nectar_papers` | LanceDB table name |
 | `EMBED_DIM` | `384` | Embedding output dimension |
@@ -283,71 +321,70 @@ All functions are in `core/backend.py`. The module is UI-agnostic — every func
 
 ```python
 SCHEMA = pa.schema([
-    pa.field("paper_id",   pa.string()),                      # MD5 of absolute filepath — dedup key
-    pa.field("paper_name", pa.string()),                      # Original PDF filename
-    pa.field("page",       pa.int32()),                       # Source page number (0-indexed)
-    pa.field("chunk",      pa.string()),                      # Raw text of the chunk
-    pa.field("vector",     pa.list_(pa.float32(), 384)),      # Embedding vector
+    pa.field("paper_id",   pa.string()),                 # MD5 of absolute filepath — dedup key
+    pa.field("paper_name", pa.string()),                 # Original filename
+    pa.field("page",       pa.int32()),                  # Page or section number (0-indexed)
+    pa.field("chunk",      pa.string()),                 # Text content of the chunk
+    pa.field("vector",     pa.list_(pa.float32(), 384)), # Embedding vector
 ])
 ```
 
 ### Singletons
 
 **`get_llm() → HuggingFacePipeline`**
-Returns the loaded Qwen2.5-0.5B-Instruct pipeline. Loaded once on first call and cached in `_llm_instance`. Uses `torch.float16` on CUDA, `float32` on CPU. Parameters: `max_new_tokens=512`, `temperature=0.5`, `repetition_penalty=1.1`.
+Loads Qwen2.5-0.5B-Instruct on first call and caches it. Uses `float16` on CUDA, `float32` on CPU. Generation params: `max_new_tokens=512`, `temperature=0.5`, `repetition_penalty=1.1`.
 
 **`get_embedding_model() → HuggingFaceEmbeddings`**
-Returns the mxbai-embed-xsmall-v1 model. Loaded once and cached in `_embedding_instance`. Embeddings are L2-normalized (`normalize_embeddings=True`) with a retrieval prefix prompt applied at encode time.
+Loads mxbai-embed-xsmall-v1 on first call and caches it. L2-normalised output; retrieval prefix prompt applied at encode time.
 
-### Database helpers
+**`get_reranker() → CrossEncoder`**
+Loads mxbai-rerank-xsmall-v1 on first call and caches it. Sigmoid activation applied so scores are in [0, 1].
 
-**`get_db() → lancedb.LanceDBConnection`**
-Opens a connection to the LanceDB store at `LANCE_DIR`.
+### Ingestion config
 
-**`get_table() → lancedb.Table | None`**
-Returns the `nectar_papers` table if it exists, `None` otherwise.
-
-**`get_or_create_table() → lancedb.Table`**
-Returns the table, creating it with `SCHEMA` if it does not exist yet.
-
-**`row_count() → int`**
-Returns the total number of rows (chunks) in the table. Returns 0 if the table does not exist.
-
-**`paper_id(filepath: str) → str`**
-Returns the MD5 hex digest of the absolute path of a file. Used as the deduplication key.
-
-**`already_indexed(filepath: str) → bool`**
-Returns `True` if a row with the file's `paper_id` already exists in the table.
-
-**`embed_texts(texts: list[str]) → np.ndarray`**
-Embeds a list of strings using the embedding model singleton. Returns a `float32` NumPy array of shape `(len(texts), 384)`.
+```python
+@dataclass
+class IngestConfig:
+    normalize_chars: bool        = True   # ligatures, non-breaking spaces, bullets
+    remove_headers_footers: bool = True   # strip short noise lines at page edges
+    merge_hyphen_breaks: bool    = True   # "word-\nrest" → "wordrest"
+    merge_soft_breaks: bool      = True   # single \n → space (keep \n\n as paragraph break)
+    chunk_size: int              = 1000
+    chunk_overlap: int           = 100
+    min_chunk_chars: int         = 80     # discard shorter chunks
+    max_stopword_ratio: float    = 0.0    # 0 = disabled
+    dedup_threshold: float       = 0.0    # 0 = disabled (Jaccard)
+```
 
 ### Ingestion
 
-**`ingest_pdf(filepath: str) → dict`**
-Loads, splits, and embeds a single PDF. Builds a typed `pa.table` batch and appends it to the LanceDB table. Returns a result dict:
+**`ingest_document(filepath: str, config: IngestConfig | None) → dict`**
+Loads any supported format via `core/loader.py`, applies the cleaning/splitting/filtering pipeline, and appends to LanceDB. Returns:
 
 ```python
 {
-    "name":    str,    # PDF filename
-    "status":  str,    # "ok" | "skipped" | "empty" | "error"
-    "chunks":  int,    # Number of chunks written (0 if skipped/error)
-    "skipped": bool,   # True if already indexed
-    "error":   str|None
+    "name":    str,          # filename
+    "status":  str,          # "ok" | "skipped" | "empty" | "error"
+    "chunks":  int,          # chunks written (0 if skipped/error)
+    "skipped": bool,
+    "error":   str | None,
+    "format":  str           # human-readable format label, e.g. "PDF", "Word Document"
 }
 ```
 
-**`ingest_multiple_pdfs(filepaths: list[str]) → list[dict]`**
-Calls `ingest_pdf` for each path and returns the list of result dicts.
+`ingest_pdf` and `ingest_multiple_pdfs` are kept as backward-compatible aliases.
+
+**`ingest_documents(filepaths: list[str], config: IngestConfig | None) → list[dict]`**
+Calls `ingest_document` for each path and returns the list of result dicts.
 
 **`get_db_stats() → dict`**
-Returns aggregate database statistics:
+Returns aggregate statistics:
 
 ```python
 {
     "total_chunks":  int,
     "total_papers":  int,
-    "papers":        list[dict],   # per-paper: paper_name, chunks, pages
+    "papers":        list[dict],   # per-document: paper_name, chunks, pages
     "has_index":     bool
 }
 ```
@@ -358,57 +395,40 @@ Drops the `nectar_papers` table from LanceDB. Returns `True`.
 ### Index builder
 
 **`build_index(metric_key: str) → dict`**
-Creates an IVF_PQ ANN index on the `vector` column. `metric_key` is one of `"cosine"`, `"l2"`, `"dot"`. Auto-tunes parameters:
-
-- `num_partitions = max(1, n // 4096)`
-- `num_sub_vectors = EMBED_DIM // 8` → 48
-
-Returns `ok=False` with a descriptive message if the table is empty or has fewer than `INDEX_MIN_ROWS` chunks.
+Creates an IVF_PQ ANN index on the `vector` column. `metric_key` is one of `"cosine"`, `"l2"`, `"dot"`. Auto-tunes `num_partitions = max(1, n // 4096)` and `num_sub_vectors = EMBED_DIM // 8`. Returns `ok=False` with a descriptive message if the corpus is too small.
 
 ### Retrieval
 
 **`retrieve_chunks(query: str, k: int) → list[dict]`**
-Embeds the query, performs a vector search, and returns the top-k results:
+Embeds the query, performs a vector search, and returns the top-k chunks with `paper_name`, `page`, `chunk`, `affinity` (`max(0, 1 − distance/2)`), and `distance`.
 
-```python
-[{
-    "paper_name": str,
-    "page":       int,
-    "chunk":      str,
-    "affinity":   float,   # max(0, 1 − distance/2), range [0, 1]
-    "distance":   float
-}]
-```
+**`rerank_chunks(query: str, chunks: list[dict], top_n: int) → list[dict]`**
+Scores each (query, chunk) pair with the cross-encoder. Adds `rerank_score` (float, 0–1) to each dict and returns the top-n sorted descending.
 
-**`answer_query(query: str, k: int) → dict`**
-Full RAG pipeline: retrieves chunks, builds context string, runs the Qwen ChatML prompt chain:
+**`answer_query(query, k_retrieve, k_rerank, rerank_threshold=0.0) → dict`**
+Full two-stage RAG pipeline. If all reranked chunks score below `rerank_threshold`, returns a fixed "not enough information" answer without calling the LLM. Returns:
 
 ```python
 {
-    "answer": str,
-    "chunks": list[dict],
-    "error":  str|None
+    "answer":          str,
+    "chunks":          list[dict],   # top chunks with affinity + rerank_score
+    "error":           str | None,
+    "below_threshold": bool          # True when the threshold blocked generation
 }
 ```
-
-Returns `error` string (not raises) on any exception so the UI can display it gracefully.
 
 ### Explorer
 
 **`explore_database(paper_filter, page_min, page_max, keyword, limit) → list[dict]`**
-Loads the full table and applies four sequential filters: paper name substring, page range, keyword substring, row limit. Returns list of dicts with fields `paper_name`, `page`, `chunk`.
+Applies four sequential filters (document name, page range, keyword, row limit) and returns matching chunks.
 
 **`get_paper_names() → list[str]`**
-Returns a sorted list of unique paper filenames currently in the database.
+Returns a sorted list of unique document filenames in the database.
 
 ### Vector Space
 
 **`load_all_vectors() → tuple[np.ndarray, pd.DataFrame]`**
-Loads every row from LanceDB. Returns `(vectors, meta_df)` where:
-- `vectors` — `float32` ndarray of shape `(n, 384)`
-- `meta_df` — DataFrame with columns `paper_id`, `paper_name`, `page`, `chunk`; index aligned with `vectors` rows
-
-Returns `(empty_array, empty_df)` when the table does not exist.
+Loads every row from LanceDB. Returns `(vectors, meta_df)` where `vectors` is a `float32` ndarray of shape `(n, 384)` and `meta_df` is a DataFrame with `paper_id`, `paper_name`, `page`, `chunk` aligned by index.
 
 ---
 
@@ -455,14 +475,16 @@ Returns `(empty_array, empty_df)` when the table does not exist.
 ## ⚙️ How It Works
 
 ```
-PDF Upload (1 or N files, via st.file_uploader)
+Any file (PDF, DOCX, CSV, MD, EPUB, code, …)
     │
     ▼
-Saved to tempfile.TemporaryDirectory()
+core/loader.py  →  Markdown text  (format-specific conversion)
     │
     ▼
-ingest_pdf() per file:
-    PyPDFLoader → RecursiveCharacterTextSplitter (1000 chars / 100 overlap)
+ingest_document() per file:
+    _clean_text()   →  normalise · remove noise · fix line breaks
+    RecursiveCharacterTextSplitter (default 1000 chars / 100 overlap)
+    _filter_chunks() →  min length · stopword density · deduplication
     │
     ▼
 embed_texts() → mxbai-embed-xsmall-v1 → float32[384] vectors
@@ -478,22 +500,25 @@ tbl.add(batch)  →  ./nectar_lancedb/nectar_papers.lance  (persistent)
     ▼
 (optional) build_index(metric)  →  IVF_PQ ANN index on vector column
     │
-    ╔══════════════════════════════════╗   ╔══════════════════════════════════════════╗
-    ║  Query page                      ║   ║  Vector Space page                       ║
-    ╠══════════════════════════════════╣   ╠══════════════════════════════════════════╣
-    ║  answer_query(query, k)          ║   ║  load_all_vectors()                      ║
-    ║    └─ retrieve_chunks(query, k)  ║   ║    └─ all float32[384] vectors + meta    ║
-    ║         └─ embed_query()         ║   ║  run_reducer(method, vectors, dims)      ║
-    ║         └─ tbl.search().limit(k) ║   ║    └─ 2D/3D projection                  ║
-    ║              → top-k (doc, dist) ║   ║  run_clusterer(method, projection)      ║
-    ║    └─ affinity = 1 − dist/2      ║   ║    └─ integer labels                    ║
-    ║    └─ ChatML prompt + Qwen LLM   ║   ║  save to ./nectar_cache/ (pickle)       ║
-    ║    └─ answer + chunks returned   ║   ║  project_query() → ★ marker             ║
-    ╚══════════════════════════════════╝   ║  sub-cluster: mask → re-project subset  ║
-                                           ╚══════════════════════════════════════════╝
+    ╔══════════════════════════════════════════╗   ╔══════════════════════════════════════════╗
+    ║  Query page                              ║   ║  Vector Space page                       ║
+    ╠══════════════════════════════════════════╣   ╠══════════════════════════════════════════╣
+    ║  answer_query(query, k_ret, k_rr, thr)  ║   ║  load_all_vectors()                      ║
+    ║    └─ retrieve_chunks(query, k_ret)      ║   ║    └─ all float32[384] vectors + meta    ║
+    ║         └─ embed query                   ║   ║  run_reducer(method, vectors, dims)      ║
+    ║         └─ tbl.search().limit(k_ret)     ║   ║    └─ 2D/3D projection                  ║
+    ║         └─ affinity = 1 − dist/2         ║   ║  run_clusterer(method, projection)       ║
+    ║    └─ rerank_chunks(query, cands, k_rr)  ║   ║    └─ integer labels                    ║
+    ║         └─ cross-encoder scores 0–1      ║   ║  save to ./nectar_cache/ (pickle)       ║
+    ║         └─ sort by rerank_score desc     ║   ║  project_query() → ★ marker             ║
+    ║    └─ threshold check (skip LLM if low)  ║   ║  sub-cluster: mask → re-project subset  ║
+    ║    └─ ChatML prompt + Qwen LLM           ║   ╚══════════════════════════════════════════╝
+    ║    └─ answer + chunks + below_threshold  ║
+    ╚══════════════════════════════════════════╝
     │
     ▼
-Streamlit renders: answer-box + chunk cards with affinity bars
+Streamlit renders: answer-box (amber if threshold not met)
+                   chunk cards sorted by rerank · affinity bars
                    Plotly Scattergl + chunk preview panel
 ```
 
@@ -503,16 +528,22 @@ Streamlit renders: answer-box + chunk cards with affinity bars
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | HuggingFace model identifier |
+| `LLM_MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | HuggingFace LLM |
 | `EMBED_MODEL_ID` | `mixedbread-ai/mxbai-embed-xsmall-v1` | Embedding model |
-| `EMBED_DIM` | `384` | Embedding output dimension |
-| `LANCE_DIR` | `./nectar_lancedb` | LanceDB root directory |
+| `RERANK_MODEL_ID` | `mixedbread-ai/mxbai-rerank-xsmall-v1` | Cross-encoder reranker |
+| `EMBED_DIM` | `384` | Embedding dimension |
+| `LANCE_DIR` | `./nectar_lancedb` | LanceDB root |
 | `TABLE_NAME` | `nectar_papers` | LanceDB table name |
-| `INDEX_MIN_ROWS` | `256` | Minimum chunks to allow IVF_PQ index training |
+| `INDEX_MIN_ROWS` | `256` | Minimum chunks to train IVF_PQ index |
 | `DEVICE` | auto (CUDA / CPU) | Compute backend |
-| `chunk_size` | `1000` | Characters per chunk |
-| `chunk_overlap` | `100` | Overlap between adjacent chunks |
-| `k` (slider default) | `5` | Retrieved chunks per query (UI range: 1–20) |
+| `chunk_size` | `1000` | Characters per chunk (user-adjustable 200–4000) |
+| `chunk_overlap` | `100` | Overlap between chunks (user-adjustable 0–500) |
+| `min_chunk_chars` | `80` | Post-filter: discard chunks shorter than this |
+| `max_stopword_ratio` | `0.0` | Post-filter: 0 = off; max stop-word fraction allowed |
+| `dedup_threshold` | `0.0` | Post-filter: 0 = off; Jaccard similarity above which a chunk is a duplicate |
+| `k_retrieve` (slider) | `50` | Candidates fetched from the vector store |
+| `k_rerank` (slider) | `10` | Chunks kept after reranking |
+| `rerank_threshold` (slider) | `10%` | Minimum rerank score; 0 = disabled |
 | `max_new_tokens` | `512` | Maximum LLM output length |
 | `temperature` | `0.5` | LLM sampling temperature |
 | `repetition_penalty` | `1.1` | Penalises repeated tokens |
@@ -573,6 +604,8 @@ Built by [@biologypeak](https://github.com/biologypeak) · Powered by open-sourc
 **v1** — single PDF · in-memory ChromaDB &nbsp;→&nbsp;
 **v2** — multi-PDF · persistent ChromaDB · k-slider · chunk explorer &nbsp;→&nbsp;
 **v3** — LanceDB · PyArrow schema · IVF_PQ index · metric selector &nbsp;→&nbsp;
-**v4** — Streamlit multipage · decoupled backend · Knowledge Base · Query · Explorer · Vector Space
+**v4.0** — Streamlit multipage · decoupled backend · Knowledge Base · Query · Explorer · Vector Space &nbsp;→&nbsp;
+**v4.1** — Vector Space Explorer · PaCMAP/UMAP/TriMap/t-SNE · HDBSCAN/Leiden · sub-clustering · disk cache &nbsp;→&nbsp;
+**v4.2** — 25+ document formats · cross-encoder reranking · configurable ingestion pipeline · rerank threshold
 
 </div>

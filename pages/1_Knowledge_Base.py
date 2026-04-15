@@ -8,9 +8,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
 from core.backend import (
-    ingest_multiple_pdfs, get_db_stats, clear_database,
+    ingest_documents, get_db_stats, clear_database,
     build_index, METRIC_INFO, INDEX_MIN_ROWS, row_count, IngestConfig,
 )
+from core.loader import SUPPORTED_EXTENSIONS, EXTENSION_LABELS
 
 st.set_page_config(page_title="Knowledge Base — Nectar", page_icon="📥", layout="wide")
 
@@ -37,12 +38,36 @@ hr { border-color:#1e2130; }
 # ── Page header ───────────────────────────────────────────────
 st.markdown("## 📥 Knowledge Base")
 st.markdown(
-    "<div style='color:#8890a8; font-size:0.9rem; margin-bottom:1.5rem;'>"
-    "Upload PDF papers, embed them into the persistent vector store, "
-    "and build an ANN index for fast retrieval."
+    "<div style='color:#8890a8; font-size:0.9rem; margin-bottom:0.8rem;'>"
+    "Upload documents in any supported format. Every file is converted to Markdown, "
+    "cleaned, chunked and embedded into the persistent vector store."
     "</div>",
     unsafe_allow_html=True,
 )
+
+# Supported formats pill list
+_fmt_groups = {
+    "Text / Logs":    [".txt", ".log", ".md"],
+    "Office":         [".pdf", ".docx", ".doc", ".odt", ".rtf"],
+    "Web / Markup":   [".html", ".htm", ".xml", ".rst", ".tex"],
+    "Data":           [".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml"],
+    "E-book":         [".epub"],
+    "Source Code":    [".py", ".js", ".c", ".cpp", ".sh"],
+}
+pills_html = "<div style='display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1.5rem;'>"
+for group, exts in _fmt_groups.items():
+    pills_html += (
+        f"<span style='font-size:0.65rem; color:#8890a8; margin-right:0.2rem; "
+        f"align-self:center;'>{group}:</span>"
+    )
+    for e in exts:
+        pills_html += (
+            f"<span style='background:#1a1d2e; border:1px solid #2a2d3e; color:#7c9ef5; "
+            f"border-radius:4px; padding:1px 7px; font-size:0.68rem; font-family:monospace;'>"
+            f"{e}</span>"
+        )
+pills_html += "</div>"
+st.markdown(pills_html, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════
 # SECTION 1 — Upload & Ingest
@@ -50,11 +75,16 @@ st.markdown(
 st.markdown('<div class="section-label">Upload & Ingest</div>', unsafe_allow_html=True)
 
 with st.container():
+    # Build accepted type list from SUPPORTED_EXTENSIONS (strip leading dot)
+    _accepted = sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS)
     uploaded_files = st.file_uploader(
-        "Select one or more PDF files",
-        type=["pdf"],
+        "Select one or more files",
+        type=_accepted,
         accept_multiple_files=True,
-        help="Each file is deduplicated by content hash — re-uploading a paper already in the DB is safe.",
+        help=(
+            "Any supported format is accepted. "
+            "Each file is deduplicated by path hash — re-uploading the same file is safe."
+        ),
         label_visibility="collapsed",
     )
 
@@ -194,31 +224,37 @@ if ingest_clicked:
                 tmp_paths.append(dest)
 
             with st.spinner(f"Embedding {len(tmp_paths)} file(s)…"):
-                results = ingest_multiple_pdfs(tmp_paths, ingest_config)
+                results = ingest_documents(tmp_paths, ingest_config)
 
         # Results table
         st.markdown("---")
         st.markdown('<div class="section-label">Ingestion Results</div>', unsafe_allow_html=True)
 
+        import html as _html
         for r in results:
             if r["skipped"]:
-                badge = '<span class="badge-skip">SKIPPED</span>'
+                badge  = '<span class="badge-skip">SKIPPED</span>'
                 detail = "Already indexed — no re-embedding needed."
             elif r["status"] == "ok":
-                badge = '<span class="badge-ok">INDEXED</span>'
+                badge  = '<span class="badge-ok">INDEXED</span>'
                 detail = f"{r['chunks']} chunks embedded."
             elif r["status"] == "empty":
-                badge = '<span class="badge-error">EMPTY</span>'
-                detail = "No extractable text found in this PDF."
+                badge  = '<span class="badge-error">EMPTY</span>'
+                detail = "No usable text after cleaning and filtering."
             else:
-                badge = '<span class="badge-error">ERROR</span>'
-                detail = r.get("error", "Unknown error.")
+                badge  = '<span class="badge-error">ERROR</span>'
+                detail = _html.escape(r.get("error", "Unknown error."))
 
+            fmt_pill = (
+                f"<span style='background:#1a1d2e; border:1px solid #2a2d3e; color:#a78bfa; "
+                f"border-radius:4px; padding:1px 6px; font-size:0.66rem; font-family:monospace;'>"
+                f"{_html.escape(r.get('format','?'))}</span>"
+            )
             st.markdown(
                 f"<div style='display:flex; align-items:center; gap:10px; padding:0.5rem 0; "
                 f"border-bottom:1px solid #1e2130; font-size:0.88rem;'>"
-                f"{badge} "
-                f"<span style='color:#c8cfe0; font-weight:500;'>{r['name']}</span>"
+                f"{badge} {fmt_pill} "
+                f"<span style='color:#c8cfe0; font-weight:500;'>{_html.escape(r['name'])}</span>"
                 f"<span style='color:#8890a8; margin-left:auto;'>{detail}</span>"
                 f"</div>",
                 unsafe_allow_html=True,
