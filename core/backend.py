@@ -4,8 +4,11 @@
 # ============================================================
 
 import os
+import re
 import hashlib
 import traceback
+import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -87,6 +90,136 @@ METRIC_INFO = {
         "use_case": "Max inner-product search, recommendation systems, dense retrieval",
     },
 }
+
+# ── IngestConfig ─────────────────────────────────────────────
+@dataclass
+class IngestConfig:
+    # Pre-processing
+    normalize_chars: bool        = True   # ligatures, non-breaking spaces, bullets
+    remove_headers_footers: bool = True   # strip short noise lines at page edges
+    merge_hyphen_breaks: bool    = True   # "word-\nrest" → "wordrest"
+    merge_soft_breaks: bool      = True   # single \n → space (keep \n\n as paragraph)
+    # Splitting
+    chunk_size: int              = 1000
+    chunk_overlap: int           = 100
+    # Post-filtering
+    min_chunk_chars: int         = 80     # discard chunks shorter than this
+    max_stopword_ratio: float    = 0.0    # 0 = disabled; ratio above which chunk is noisy
+    dedup_threshold: float       = 0.0    # 0 = disabled; Jaccard above which chunk is duplicate
+
+
+# ── Stopwords (Italian + English, compact) ───────────────────
+_STOPWORDS: frozenset = frozenset({
+    # English
+    "the","a","an","and","or","but","in","on","at","to","for","of","with","is",
+    "are","was","were","be","been","have","has","had","do","does","did","will",
+    "would","could","should","may","might","this","that","these","those","it",
+    "its","i","you","he","she","we","they","not","no","from","by","as","into",
+    "through","before","after","above","below","between","each","more","most",
+    "other","such","than","then","up","out","about","if","so","all","any",
+    # Italian
+    "il","lo","la","i","gli","le","un","uno","una","di","del","della","dello",
+    "dei","delle","degli","a","al","alla","allo","ai","agli","alle","da","dal",
+    "dalla","dallo","dai","dalle","dagli","in","nel","nella","nello","nei",
+    "nelle","negli","con","su","sul","sulla","sullo","sui","sulle","sugli",
+    "per","tra","fra","e","o","ma","se","non","che","è","sono","era","erano",
+    "ha","hanno","aveva","avevano","si","ci","ne","questo","questa","questi",
+    "queste","quello","quella","quelli","quelle","come","più","anche","però",
+    "ancora","già","molto","bene","dove","quando","quanto","cui","quale","quali",
+})
+
+
+def _clean_text(text: str, cfg: IngestConfig) -> str:
+    """Pre-process raw page text extracted from a PDF."""
+    if cfg.normalize_chars:
+        # Unicode ligatures → ASCII equivalents
+        for lig, rep in {"ﬁ":"fi","ﬂ":"fl","ﬀ":"ff","ﬃ":"ffi","ﬄ":"ffl","ﬅ":"st","ﬆ":"st"}.items():
+            text = text.replace(lig, rep)
+        # Soft hyphen, non-breaking space, zero-width characters
+        text = text.replace("\xad", "").replace("\xa0", " ").replace("\u200b", "")
+        # Bullet variants → dash
+        text = re.sub(r"[•·▪▸►◦‣⁃]", "- ", text)
+        # NFC normalization
+        text = unicodedata.normalize("NFC", text)
+
+    if cfg.remove_headers_footers:
+        lines = text.split("\n")
+
+        def _is_noise(line: str) -> bool:
+            s = line.strip()
+            if not s:
+                return False
+            # Pure page number
+            if re.fullmatch(r"\d{1,4}", s):
+                return True
+            # "Page N", "Pagina N", "N of M", "N di M"
+            if re.fullmatch(r"(page|pagina|pag\.?)\s*\d+(\s*(of|di)\s*\d+)?", s, re.I):
+                return True
+            # Short line (≤ 4 words) with no sentence punctuation → likely header/footer
+            if len(s.split()) <= 4 and not re.search(r"[.!?:,;()\[\]]", s):
+                return True
+            return False
+
+        # Strip noise from the top and bottom (up to 3 lines each side)
+        for _ in range(3):
+            if lines and _is_noise(lines[0]):
+                lines.pop(0)
+        for _ in range(3):
+            if lines and _is_noise(lines[-1]):
+                lines.pop()
+        text = "\n".join(lines)
+
+    if cfg.merge_hyphen_breaks:
+        # "parola-\nresto" → "parolaresto"  (hyphenated line-wrap)
+        text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+
+    if cfg.merge_soft_breaks:
+        # Single \n (column wrap) → space; preserve \n\n (paragraph break)
+        text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+        # Collapse excess spaces
+        text = re.sub(r" {2,}", " ", text)
+
+    return text.strip()
+
+
+def _filter_chunks(chunks: list, cfg: IngestConfig) -> list:
+    """Post-process split chunks: length, stopword density, deduplication."""
+    # 1. Minimum length
+    if cfg.min_chunk_chars > 0:
+        chunks = [c for c in chunks if len(c.page_content.strip()) >= cfg.min_chunk_chars]
+
+    # 2. Stopword density — discard chunks that are mostly stopwords (noise/TOC/lists)
+    if cfg.max_stopword_ratio > 0.0:
+        def _sw_ratio(text: str) -> float:
+            words = re.findall(r"[a-zA-ZÀ-ÿ]+", text.lower())
+            if not words:
+                return 1.0
+            return sum(1 for w in words if w in _STOPWORDS) / len(words)
+
+        chunks = [c for c in chunks if _sw_ratio(c.page_content) <= cfg.max_stopword_ratio]
+
+    # 3. Near-duplicate removal (Jaccard on word sets, within this document batch)
+    if cfg.dedup_threshold > 0.0:
+        def _wset(text: str) -> frozenset:
+            return frozenset(re.findall(r"[a-zA-ZÀ-ÿ]{3,}", text.lower()))
+
+        kept, seen = [], []
+        for c in chunks:
+            ws = _wset(c.page_content)
+            if not ws:
+                kept.append(c)
+                continue
+            dup = any(
+                len(ws & prev) / len(ws | prev) >= cfg.dedup_threshold
+                for prev in seen
+            )
+            if not dup:
+                kept.append(c)
+                seen.append(ws)
+        chunks = kept
+
+    return chunks
+
 
 # ── Singletons ────────────────────────────────────────────────
 _llm_instance       = None
@@ -203,10 +336,14 @@ def rerank_chunks(query: str, chunks: list[dict], top_n: int) -> list[dict]:
 
 
 # ── Ingestion ─────────────────────────────────────────────────
-def ingest_pdf(filepath: str) -> dict:
+def ingest_pdf(filepath: str, config: IngestConfig | None = None) -> dict:
     """
     Returns dict with keys: name, status, chunks, skipped, error
+    Applies the full pre-processing → split → post-filter pipeline defined by config.
     """
+    if config is None:
+        config = IngestConfig()
+
     name = Path(filepath).name
     pid  = paper_id(filepath)
 
@@ -214,13 +351,27 @@ def ingest_pdf(filepath: str) -> dict:
         return {"name": name, "status": "skipped", "chunks": 0, "skipped": True, "error": None}
 
     try:
-        loader  = PyPDFLoader(filepath)
-        pages   = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
-        chunks  = splitter.split_documents(pages)
+        loader = PyPDFLoader(filepath)
+        pages  = loader.load()
+
+        # ── Pre-processing: clean each page individually ──────
+        for doc in pages:
+            doc.page_content = _clean_text(doc.page_content, config)
+
+        # ── Splitting ─────────────────────────────────────────
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+            length_function=len,
+        )
+        chunks = splitter.split_documents(pages)
+
+        # ── Post-filtering ────────────────────────────────────
+        chunks = _filter_chunks(chunks, config)
 
         if not chunks:
-            return {"name": name, "status": "empty", "chunks": 0, "skipped": False, "error": "No extractable text"}
+            return {"name": name, "status": "empty", "chunks": 0, "skipped": False,
+                    "error": "No usable text after cleaning and filtering"}
 
         texts      = [c.page_content for c in chunks]
         page_nums  = [int(c.metadata.get("page", 0)) for c in chunks]
@@ -241,8 +392,8 @@ def ingest_pdf(filepath: str) -> dict:
         return {"name": name, "status": "error", "chunks": 0, "skipped": False, "error": str(e)}
 
 
-def ingest_multiple_pdfs(filepaths: list[str]) -> list[dict]:
-    return [ingest_pdf(fp) for fp in filepaths]
+def ingest_multiple_pdfs(filepaths: list[str], config: IngestConfig | None = None) -> list[dict]:
+    return [ingest_pdf(fp, config) for fp in filepaths]
 
 
 def get_db_stats() -> dict:

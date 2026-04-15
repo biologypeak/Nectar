@@ -3,7 +3,7 @@ Page 2 — Query
 Natural language querying · retrieval + reranking · Answer panel · Chunk Explorer with dual metrics
 """
 
-import sys, os
+import sys, os, html as _html
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
@@ -177,11 +177,12 @@ if submit:
             if chunks:
                 chunk_html = ""
                 for i, c in enumerate(chunks, 1):
-                    sim_pct  = int(c["affinity"] * 100)
-                    rr_pct   = int(c.get("rerank_score", 0) * 100)
-                    sim_bar  = sim_pct
-                    rr_bar   = rr_pct
-                    preview  = c["chunk"][:480] + ("…" if len(c["chunk"]) > 480 else "")
+                    sim_pct     = int(c["affinity"] * 100)
+                    rr_pct      = int(c.get("rerank_score", 0) * 100)
+                    sim_bar     = sim_pct
+                    rr_bar      = rr_pct
+                    preview     = _html.escape(c["chunk"][:480]) + ("…" if len(c["chunk"]) > 480 else "")
+                    paper_name  = _html.escape(c["paper_name"])
                     # Dim chunks with very low rerank score (< 10%)
                     card_opacity = "1.0" if rr_pct >= 10 else "0.55"
 
@@ -189,7 +190,7 @@ if submit:
                     <div class="chunk-card" style="opacity:{card_opacity};">
                         <div class="chunk-meta">
                             #{i} &nbsp;·&nbsp;
-                            <b style="color:#c8cfe0;">{c['paper_name']}</b>
+                            <b style="color:#c8cfe0;">{paper_name}</b>
                             &nbsp;·&nbsp; p.{c['page']}
                         </div>
                         <div style="display:flex; gap:0.6rem; align-items:center; margin-bottom:0.55rem; flex-wrap:wrap;">

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import streamlit as st
 from core.backend import (
     ingest_multiple_pdfs, get_db_stats, clear_database,
-    build_index, METRIC_INFO, INDEX_MIN_ROWS, row_count,
+    build_index, METRIC_INFO, INDEX_MIN_ROWS, row_count, IngestConfig,
 )
 
 st.set_page_config(page_title="Knowledge Base — Nectar", page_icon="📥", layout="wide")
@@ -58,6 +58,123 @@ with st.container():
         label_visibility="collapsed",
     )
 
+    # ── Processing Pipeline ───────────────────────────────────
+    with st.expander("⚙  Processing Pipeline", expanded=False):
+        st.markdown(
+            "<div style='font-size:0.8rem; color:#8890a8; margin-bottom:1rem;'>"
+            "Configure how PDFs are cleaned, split and filtered before embedding. "
+            "Defaults work well for most scientific papers."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        tab_pre, tab_split, tab_post = st.tabs(["1 · Pre-processing", "2 · Splitting", "3 · Post-filtering"])
+
+        with tab_pre:
+            st.markdown(
+                "<div style='font-size:0.78rem; color:#8890a8; margin-bottom:0.8rem;'>"
+                "Applied to each page <b style='color:#c8cfe0;'>before</b> splitting."
+                "</div>", unsafe_allow_html=True,
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                cfg_normalize = st.toggle(
+                    "Normalize characters",
+                    value=True,
+                    help="Converts typographic ligatures (ﬁ→fi, ﬂ→fl), soft hyphens, "
+                         "non-breaking spaces and bullet variants to standard ASCII.",
+                )
+                cfg_rm_hf = st.toggle(
+                    "Remove headers / footers",
+                    value=True,
+                    help="Strips short repeated lines at the top and bottom of each page "
+                         "(page numbers, chapter titles, running headers).",
+                )
+            with col_b:
+                cfg_hyphen = st.toggle(
+                    "Merge hyphenated line breaks",
+                    value=True,
+                    help='Re-joins words broken by column width: "collo-\\ncazione" → "collocazione".',
+                )
+                cfg_softbreak = st.toggle(
+                    "Merge soft line breaks",
+                    value=True,
+                    help="Converts single newlines (column wrap) to spaces while preserving "
+                         "double newlines (paragraph boundaries).",
+                )
+
+        with tab_split:
+            st.markdown(
+                "<div style='font-size:0.78rem; color:#8890a8; margin-bottom:0.8rem;'>"
+                "RecursiveCharacterTextSplitter — splits on paragraphs → sentences → words."
+                "</div>", unsafe_allow_html=True,
+            )
+            col_c, col_d = st.columns(2)
+            with col_c:
+                cfg_chunk_size = st.slider(
+                    "Chunk size (characters)",
+                    min_value=200, max_value=4000, value=1000, step=100,
+                    help="Maximum characters per chunk. Larger chunks give more context "
+                         "but reduce retrieval precision.",
+                )
+            with col_d:
+                cfg_overlap = st.slider(
+                    "Chunk overlap (characters)",
+                    min_value=0, max_value=500, value=100, step=10,
+                    help="Characters shared between consecutive chunks. Prevents information "
+                         "from being cut at a boundary.",
+                )
+            overlap_pct = round(cfg_overlap / cfg_chunk_size * 100) if cfg_chunk_size else 0
+            st.markdown(
+                f"<div style='font-size:0.75rem; color:#8890a8;'>"
+                f"Overlap is <b style='color:#e0e4f0;'>{overlap_pct}%</b> of chunk size."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        with tab_post:
+            st.markdown(
+                "<div style='font-size:0.78rem; color:#8890a8; margin-bottom:0.8rem;'>"
+                "Applied <b style='color:#c8cfe0;'>after</b> splitting, before embedding."
+                "</div>", unsafe_allow_html=True,
+            )
+            col_e, col_f, col_g = st.columns(3)
+            with col_e:
+                cfg_min_chars = st.slider(
+                    "Min chunk length (chars)",
+                    min_value=0, max_value=300, value=80, step=10,
+                    help="Chunks shorter than this are discarded — typically page numbers, "
+                         "isolated titles or index remnants.",
+                )
+            with col_f:
+                cfg_sw_ratio = st.slider(
+                    "Max stop-word ratio",
+                    min_value=0, max_value=100, value=0, step=5, format="%d%%",
+                    help="Discard chunks where stop-words exceed this share of total words. "
+                         "0 = disabled. ~80% catches table-of-contents and formatting noise.",
+                )
+            with col_g:
+                cfg_dedup = st.slider(
+                    "Dedup threshold (Jaccard)",
+                    min_value=0, max_value=100, value=0, step=5, format="%d%%",
+                    help="Remove chunks whose word-set overlap with a previous chunk exceeds "
+                         "this threshold. 0 = disabled. ~90% removes near-identical paragraphs "
+                         "(disclaimers, repeated footnotes).",
+                )
+
+    # Build the IngestConfig from UI values
+    ingest_config = IngestConfig(
+        normalize_chars=cfg_normalize,
+        remove_headers_footers=cfg_rm_hf,
+        merge_hyphen_breaks=cfg_hyphen,
+        merge_soft_breaks=cfg_softbreak,
+        chunk_size=cfg_chunk_size,
+        chunk_overlap=cfg_overlap,
+        min_chunk_chars=cfg_min_chars,
+        max_stopword_ratio=cfg_sw_ratio / 100.0,
+        dedup_threshold=cfg_dedup / 100.0,
+    )
+
     col_btn, col_warn = st.columns([2, 5])
     with col_btn:
         ingest_clicked = st.button("⚡  Embed & Add to Database", type="primary", use_container_width=True)
@@ -77,7 +194,7 @@ if ingest_clicked:
                 tmp_paths.append(dest)
 
             with st.spinner(f"Embedding {len(tmp_paths)} file(s)…"):
-                results = ingest_multiple_pdfs(tmp_paths)
+                results = ingest_multiple_pdfs(tmp_paths, ingest_config)
 
         # Results table
         st.markdown("---")
