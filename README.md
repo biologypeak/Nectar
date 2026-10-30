@@ -601,11 +601,4 @@ MIT — use freely, credit appreciated.
 
 Built by [@biologypeak](https://github.com/biologypeak) · Powered by open-source models · No data leaves your machine
 
-**v1** — single PDF · in-memory ChromaDB &nbsp;→&nbsp;
-**v2** — multi-PDF · persistent ChromaDB · k-slider · chunk explorer &nbsp;→&nbsp;
-**v3** — LanceDB · PyArrow schema · IVF_PQ index · metric selector &nbsp;→&nbsp;
-**v4.0** — Streamlit multipage · decoupled backend · Knowledge Base · Query · Explorer · Vector Space &nbsp;→&nbsp;
-**v4.1** — Vector Space Explorer · PaCMAP/UMAP/TriMap/t-SNE · HDBSCAN/Leiden · sub-clustering · disk cache &nbsp;→&nbsp;
-**v4.2** — 25+ document formats · cross-encoder reranking · configurable ingestion pipeline · rerank threshold
-
 </div>
